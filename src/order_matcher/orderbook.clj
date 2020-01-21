@@ -3,26 +3,29 @@
             [clojure.data.priority-map :refer [priority-map priority-map-keyfn]]))
 ;; also try priority-map-keyfn-by (constructor keyfn <)
 (def orderbook
-  ({atom :buy  (priority-map-keyfn (fn [{:keys [price time]}] [(- price) time]))
-    :sell (priority-map-keyfn (fn [{:keys [price time]}] [price time]))
-    :customer-trades {}})) ; {userid: [trades...]} for updates to orders
+  (atom {:customer-trades {}})) ; {userid: {:order-id trade} for updates to orders
+
+(defn make-new-book []
+  {:buy  (priority-map-keyfn (fn [{:keys [price time]}] [(- price) time]))
+   :sell (priority-map-keyfn (fn [{:keys [price time]}] [price time]))})
 
 (defn satisfies [order-type]
   (if (= order-type :buy) >= <=))
 
 (defn other-side [order-type]
-  (if (= order-type :buy) :sell :buy))
+  (cond (= order-type :buy) :sell
+        (= order-type :sell) :buy
+        :else (throw (Exception. "Order type must be :buy or :sell"))))
 
 ;; build-trade, time and id should be assigned immediately before filling
-(defn build-trade [{:keys [order-type amount price user-id] :as trade}]
+(defn build-trade [{:keys [ticker order-type amount price user-id] :as trade}]
   ;;{:pre (every? #(m %) [:price :amount :user-id :order-type])}
   (hash-map :trade-id (java.util.UUID/randomUUID)
             :trade (assoc trade :order-time (t/local-date-time))))
-;;(build-trade {:price 90 :amount 1003 :user-id "fred" :order-type :sell})
 
 (defn allocate-orders [[executed-trades remaining-amt] [c-id c-trade]]
   ;;(println c-id c-trade)
-  (if (<= remaining-amt 0)
+  (if (zero? remaining-amt)
     (reduced [executed-trades remaining-amt])
     [(assoc executed-trades c-id (update c-trade :amount #(max 0 (- % remaining-amt))))
      (max 0 (- remaining-amt (:amount c-trade)))]))
@@ -32,47 +35,42 @@
     (assoc m k (dissoc-in (m k) ks))
     (dissoc m k)))
 
-(allocate-orders
- [{} 100]
- [999 (:trade (build-trade {:order-type :sell :price 120 :amount 140 :user-id 6}))])
-
-(defn remove-from-book [orderbook [id trade]]
+(defn remove-from-book [orderbook trade-id trade]
   (-> orderbook
-      (dissoc-in [(:order-type trade) id])
-      (dissoc-in [:customer-trades (:customer-id trade)])))
+      (dissoc-in [(:ticker trade) (:order-type trade) trade-id])
+      (dissoc-in [:customer-trades (:user-id trade) trade-id])))
 
-(defn fill-order!
-  [{id :trade-id
-    {:keys [price amount user-id order-time order-type] :as trade} :trade
-    :as order} candidates] ;; candidates = [id {trade} id2 {trade2}]
-  (let [[executed-trades remaining-amt] (reduce allocate-orders
+(defn update-order-quantity [orderbook trade-id trade]
+  (-> orderbook
+      (update-in [(:ticker trade) (:order-type trade) trade-id] merge trade)
+      (update-in [:customer-trades (:user-id trade) trade-id] merge trade)))
+
+(defn fill-order
+  [orderbook
+   {id :trade-id
+    {:keys [ticker price amount user-id order-time order-type] :as trade} :trade :as order}
+   candidates] ;; candidates = [id {trade} id2 {trade2}]
+  (let [[updated-trades remaining-amt] (reduce allocate-orders
                                                 [{} amount]
                                                 candidates)]
-    (doseq [[other-id other-trade] executed-trades]
-      (if (zero? (:amount other-trade))
-        ;; TODO: every change to  buy/sell needs to be mirrored in customer-trades
-        ;; i've done that for clearing trades when zero remain, but not yet for modifying
-        ;; trades when there are still some unfilled amounts remaining
-        (swap! orderbook #(remove-from-book % [other-id other-trade]))
-        ;;TODO:
-        (swap! orderbook
-               assoc-in
-               [(other-side order-type) other-id :amount]
-               (:amount other-trade))))
-    (if (zero? remaining-amt)
-      (swap! orderbook #(remove-from-book % [id trade]))
-      ;;TODO:
-      (swap! orderbook assoc-in [order-type id :amount] remaining-amt))))
+    (reduce-kv (fn [orderbook other-id other-trade]
+                 (if (zero? (:amount other-trade))
+                   (remove-from-book orderbook other-id other-trade)
+                   (update-order-quantity orderbook other-id other-trade)))
+               (if (zero? remaining-amt)
+                 (remove-from-book orderbook id trade)
+                 (update-order-quantity orderbook id (assoc trade :amount remaining-amt)))
+               updated-trades)))
 
 (defn add-to-book
   [orderbook
    {id :trade-id
-    {:keys [price amount user-id order-time order-type] :as trade} :trade :as order}]
+    {:keys [ticker price amount user-id order-time order-type] :as trade} :trade :as order}]
   (-> orderbook
-      (update order-type assoc id trade)
-      (update-in [:customer-trades user-id] (fnil merge {}) order)))
+      (update ticker (fnil assoc-in (make-new-book)) [order-type id] trade)
+      (update-in [:customer-trades user-id] (fnil merge {}) {id trade})))
 
-(defn possible-matching-trades [price order-type]
+(defn price-acceptable [price order-type]
   (fn [[id offset-trade]]
     ((satisfies order-type) price (:price offset-trade))))
 
@@ -80,13 +78,15 @@
   "fill order if there is an offsetting match, otherwise add to book
   when adding entries, buys are sorted with highest price first, sells
   with lowest price first."
-  [{id :trade-id {:keys [price amount user-id order-time order-type] :as trade} :trade :as order}]
+  ;;TODO: guard against zero amount trades. These will auto-remove right now but best to disallow
+  [{id :trade-id
+    {:keys [ticker price amount user-id order-time order-type] :as trade} :trade :as order}]
   (let [offset-side (other-side order-type)
-        candidates  (filter (possible-matching-trades price order-type)
-                            (@orderbook offset-side))]
+        candidates  (filter (price-acceptable price order-type)
+                            (get-in @orderbook [ticker offset-side]))]
     (if (not-empty candidates)
-      (fill-order! order candidates)
-      (swap! orderbook #(add-to-book % order)))))
+      (swap! orderbook fill-order order candidates)
+      (swap! orderbook add-to-book order))))
 
 ;; some order -> all candidates that meet the price
 ;; reduce over those that meet price  -> no, because changing as we go so doseq
@@ -101,8 +101,7 @@
  :trade-notification
  (fn [k r o n] (println "value was" o "and is now" n "!")))
 
-
-(add-order (build-trade {:order-type :buy :price 120 :amount 1337 :user-id 1}))
+(clojure.pprint/pprint (add-order (build-trade {:order-type :buy :price 120 :amount 1337 :user-id 1 :ticker "aapl"})))
 (add-order (build-trade {:order-type :buy :price 120 :amount 1337 :user-id 2}))
 (add-order (build-trade {:order-type :buy :price 100 :amount 1337 :user-id 3}))
 (add-order (build-trade {:order-type :buy :price 99.4 :amount 1337 :user-id 4}))
@@ -110,20 +109,10 @@
 
 (doseq [[id trade] (:buy @orderbook)] (println trade))
 
-(add-order (build-trade {:order-type :sell :price 120 :amount 1337 :user-id 6}))
+(add-order (build-trade {:order-type :sell :price 120 :amount 1337 :user-id 6 :ticker "aapl"}))
 (add-order (build-trade {:order-type :sell :price 120 :amount 1337 :user-id 7}))
 (add-order (build-trade {:order-type :sell :price 110 :amount 1337 :user-id 8}))
 (add-order (build-trade {:order-type :sell :price 114 :amount 1337 :user-id 9}))
 (add-order (build-trade {:order-type :sell :price 112 :amount 1337 :user-id 10}))
 (add-order (build-trade {:order-type :sell :price 90 :amount 1337 :user-id 10}))
-
-(peek (@orderbook :buy))
-(peek (@orderbook :sell))
-
-;;;; core api ;;;;
-
-;; add-trade
-;; modify-trade
-;; view trades
-((juxt (comp count :buy) (comp count :sell))
- @orderbook)
+(clojure.pprint/pprint @orderbook)
