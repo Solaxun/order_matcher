@@ -1,10 +1,6 @@
 # order-matcher
 
-An implementation of various order matching algorithms, initially starting with standard price/time FIFO matching. 
-
-## Installation
-
-Download from http://example.com/FIXME.
+An implementation of the FIFO price/time order matching algorithm, [as specified by the CME group ](https://www.cmegroup.com/confluence/display/EPICSANDBOX/Supported+Matching+Algorithms#SupportedMatchingAlgorithms-FIFO)
 
 ## Usage
 
