@@ -22,10 +22,12 @@ Additionally, the following keys will be added for you when the trade is created
 
 Make a new trade:
 
+```clojure
 (def my-trade
-  (build-trade {:price 90 :amount 1003 :user-id "fred" :order-type :sell})
+  (build-trade {:price 90 :amount 1003 :user-id "fred" :order-type :sell})```
 
-```>>> #'order-matcher.orderbook/build-trade{:trade-id #uuid "21e6a9c3-3918-4614-9c92-ee748a9b90f6", :trade {:price 90, :amount 1003, :user-id "fred", :order-type :sell, :order-time #object[java.time.LocalDateTime 0x1e7dc670 "2020-01-20T17:26:46.673"]}}```
+```clojure
+>>> #'order-matcher.orderbook/build-trade{:trade-id #uuid "21e6a9c3-3918-4614-9c92-ee748a9b90f6", :trade {:price 90, :amount 1003, :user-id "fred", :order-type :sell, :order-time #object[java.time.LocalDateTime 0x1e7dc670 "2020-01-20T17:26:46.673"]}}```
 
 Place a trade:
 
