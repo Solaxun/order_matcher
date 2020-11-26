@@ -1,22 +1,36 @@
 (ns order-matcher.orderbook
   (:require [java-time :as t]
-            [clojure.data.priority-map :refer [priority-map priority-map-keyfn]]
+            [clojure.data.priority-map :refer [priority-map priority-map-keyfn priority->set-of-items]]
             [order-matcher.protocols :as protocols])
   (:import (java.util UUID)))
 
 (defn satisfies [side]
-  (if (= side :buy) >= <=))
+  (if (= side :bid) >= <=))
 
 (defn other-side [trade]
   (let [side (:side trade)]
-    (cond (= side :buy) :sell
-          (= side :sell) :buy
-          :else (throw (Exception. (str "Side must be :buy or :sell, not " side))))))
+    (cond (= side :bid) :ask
+          (= side :ask) :bid
+          :else (throw (Exception. (str "Side must be :bid or :ask, not " side))))))
+
+(defn dissoc-in [m [k & ks]]
+  (if ks
+    (assoc m k (dissoc-in (get m k) ks))
+    (dissoc m k)))
+
+(defn update-or-dissoc-in [m ks removef updatef & updatef-args]
+  ;TODO: make more efficient if needed by doing it all in one pass
+  (let [newval (apply updatef (get-in m ks) updatef-args)]
+    (if (removef newval)
+      (dissoc-in m ks)
+      (assoc-in m ks newval))))
 
 ;; order, time and id should be assigned immediately before filling
-(defn order [{:keys [ticker side order-type amount price] :as trade}]
+(defn order [{:keys [order-type] :as trade}]
   {:pre [(every? (partial contains? trade)
-                 [:ticker :side :order-type :amount :price])]}
+                 (if (= order-type :limit)
+                   [:ticker :side :order-type :amount :price]
+                   [:ticker :side :order-type :amount]))]}
   (let [trade-id (UUID/randomUUID)]
     (hash-map :trade-id trade-id
               :trade (assoc trade :order-time (t/local-date-time)
@@ -27,90 +41,131 @@
     identity
     (fn [[id offset-trade]]
       ((satisfies side) price (:price offset-trade)))))
-;; TODO: status field: pending, partially-executed, fully-executed
-;; TOD: make executed trades fill at the best price, e.g. limit buy 109 match limit sell 108
-;; should execute on the sell side at 109 too, not just buy side
+
 (defn execute-trade [{:keys [trade-id trade] :as order} matching-trades]
   "Given an order and seq of matching trades, returns a new trade and seq of
   executed trades. The amounts in executed-trades represent actual amounts filled
   and the amount in the returned trade represents the amount remaining, after
   all successful matches have been filled"
-  (reduce (fn [{{amt-left :amount} :trade :as res} [executed-id executed-trade]]
+  (reduce (fn [{{amt-left :amount fills :fills} :trade :as res} [executed-id executed-trade]]
             (if (zero? amt-left)
               (reduced res)
               (let [trade-amt (max 0 (- amt-left (:amount executed-trade)))
                     match-amt (max 0 (- (:amount executed-trade) amt-left))]
                 (-> res
-                    (update :trade assoc :amount trade-amt)
+                    (update :trade assoc :amount trade-amt
+                            :fills (conj fills {:amount     (- (:amount executed-trade) match-amt)
+                                                          :price (:price executed-trade)}))
                     (update :executed-trades assoc
                             executed-id (assoc executed-trade
                                           :amount (- (:amount executed-trade) match-amt)
-                                          :price (:price trade))) ;TODO: part1, still need exec status
+                                          ;; trades should transact at the limit price in the book
+                                          ;; but if the resting trade is a market order, then transact
+                                          ;; at the crossing trade's price
+                                          :price (:price executed-trade)))
                     (update :executed-trades assoc
                             trade-id
                             (assoc trade
-                              :amount (- (:amount trade) trade-amt)))))))
-          {:trade trade :executed-trades {}}
+                              :amount (- (:amount trade) trade-amt)
+                              :price (:price executed-trade)))))))
+          {:trade (assoc trade :fills []) :executed-trades {}}
           matching-trades))
 
-(defrecord FifoBook [buy sell executed-trades current-trade]
+(defn add-to-book
+  [book {:keys [trade-id side price amount order-type] :as trade}]
+  (if (= order-type :limit)
+    (-> book
+        (assoc :executed-trades {} :trade-status trade)
+        (assoc-in [side trade-id] trade)
+        (update-in [:price->quantity side price]
+                   (fnil + 0)
+                   amount))
+    (-> book
+        (assoc :executed-trades {}
+               :trade-status {:status           :rejected
+                              :reason           "insufficient liquidity"
+                              :trade-id         trade-id
+                              :amount-remaining (:amount trade)
+                              :fills            []}))))
+
+(defn update-price->quantity
+  [price->quantity {:keys [trade-id side amount price fill-type original-trade-id new-amount]}]
+  (cond (= trade-id original-trade-id)
+        (if (= fill-type :partial-fill)
+          (assoc-in price->quantity [side price] new-amount)
+          price->quantity)
+
+        (some? (get-in price->quantity [side price]))
+        (update-or-dissoc-in price->quantity [side price] zero? - amount)
+        #_(update-in price->quantity [side price] - amount)
+
+        :else
+        (do (println "****")
+            (assoc-in price->quantity [side price] new-amount))))
+
+(defrecord FifoBook [bid ask executed-trades trade-status price->quantity]
   protocols/Matcher
   (fill-order [this order]
-    (if-let [matched (seq (protocols/get-matching-trades this order))]
-      (let [{:keys [trade executed-trades]} (execute-trade order matched)]
-        (assoc (reduce (fn [book [executed-id executed-trade]]
-                         (update book (:side executed-trade)
-                                 ;; executed the full amount, remove from book
-                                 #(if (or (and (= executed-id (:trade-id trade))
-                                               ;; if executed trade is the current trade being processed
-                                               ;; check if amount executed covers the full amt of original order
-                                               (= (:amount executed-trade) (get-in order [:trade :amount])))
-                                          (= (:amount executed-trade)
-                                             (get-in book [(:side executed-trade)
-                                                           executed-id
-                                                           :amount])))
-                                    (do (println "removing: " executed-id) (dissoc % executed-id))
-                                    (assoc % executed-id
-                                             (update executed-trade :amount
-                                                     ;; partial fill, adjust amount remaining in book
-                                                     ;; don't worry about exec-amt exceeding what's
-                                                     ;; in book, that's handled in execute-trades
-                                                     (fn [exec-amt]
-                                                       ;; if the executed trade is the current trade being
-                                                       ;; processed, it doesn't exist in the order book yet
-                                                       ;; so we can't get the amount resting in the book
-                                                       (if (= executed-id (:trade-id trade))
-                                                         (:amount trade)
-                                                         (- (get-in book [(:side executed-trade)
-                                                                          executed-id
-                                                                          :amount])
-                                                            exec-amt))))))))
-                       this
-                       executed-trades)
-          :executed-trades executed-trades
-          :current-trade trade))
-      ;; no matching trades, add to book
-
-      (-> this
-          (assoc :executed-trades {})
-          (assoc :current-trade {})
-          (assoc-in
-            [(-> order :trade :side) (:trade-id order)]
-            (:trade order)))))
+    (let [{trade-id :trade-id original-trade :trade} order
+          {:keys [amount price side]} original-trade]
+      (if-let [matched (seq (protocols/get-matching-trades this order))]
+        (let [{:keys [trade executed-trades]} (execute-trade order matched)
+              new-book (reduce (fn [book [executed-id executed-trade]]
+                                 (let [{executed-amount :amount executed-side :side executed-price :price} executed-trade
+                                       resting-amount (if (= trade-id executed-id)
+                                                        amount
+                                                        (get-in book [executed-side executed-id :amount]))
+                                       new-amount (- resting-amount executed-amount)]
+                                   (if (zero? new-amount)
+                                     ;; whole trade filled, remove from book if resting limit, don't add to book if incoming order
+                                     ;; dissoc-ing the trade-id is ok even though it's not part of the book, as dissocing a key
+                                     ;; that doesn't exist just gives the map back
+                                     (-> book
+                                         (dissoc-in [executed-side executed-id])
+                                         (update :price->quantity update-price->quantity
+                                                 (assoc executed-trade :fill-type :complete-fill
+                                                                       :original-trade-id trade-id
+                                                                       :new-amount new-amount)))
+                                     ;; if it's the current trade, that's not in the book so need to add the remaining amt
+                                     ;; if it's any other resting trade, it's already in book so deduct executed amt
+                                     (-> book
+                                         ;;TODO: partial fill of market order... cancel rest, limit rest, cancel whole thing    ?
+                                         (assoc-in [executed-side executed-id] (assoc executed-trade :amount new-amount))
+                                         (update :price->quantity update-price->quantity
+                                                 (assoc executed-trade :fill-type :partial-fill
+                                                                       :original-trade-id trade-id
+                                                                       :new-amount new-amount))))))
+                               this
+                               executed-trades)]
+          (assoc new-book :executed-trades executed-trades
+                          :trade-status {:trade-id         trade-id
+                                         :status           (if (zero? (:amount trade)) :fully-executed :partial-fill)
+                                         :amount-remaining (:amount trade)
+                                         :fills             (:fills trade)}))
+        ;; no matching trades, add to book
+        (add-to-book this original-trade))))
   (get-matching-trades [this order]
     (let [trade (:trade order)]
-      (filter (price-acceptable  (:price trade)
+      (filter (price-acceptable (:price trade)
                                 (:side trade)
                                 (:order-type trade))
               (get this (other-side trade)))))
-  (update-order [this trade new-order]
-    (-> this
-        (protocols/cancel-order trade)
-        (protocols/fill-order new-order)))
-  (cancel-order [this trade]
-    (update-in this [(:side trade) (:trade-id trade)] dissoc))
+  (update-order [this trade-id new-order]
+    ;; TODO: update and cancel won't have access to the trade once it's in the book, so have
+    ;; to use trade-id after all instead.  Also need to cancel out amounts in price->quantity
+    (let [trade (get bid trade-id (get ask trade-id))]      ; uh-oh, don't know side from only trade-id :(
+      (-> this
+          (protocols/cancel-order trade)
+          (protocols/fill-order new-order)
+          (update-in price->quantity [(:side trade) (:price trade)] - (:amount trade)))))
+  (cancel-order [this trade-id]
+    (let [trade (get bid trade-id (get ask trade-id))]
+      (update-in this [(:side trade) (:trade-id trade)] dissoc)))
   (bid-ask [this]
-    {:bid (-> buy peek last :price) :ask (-> sell peek last :price)}))
+    (let [bid-price (-> bid peek last :price)
+          ask-price (-> ask peek last :price)]
+      {:bid {:price bid-price :amount (get-in price->quantity [:bid bid-price])}
+       :ask {:price ask-price :amount (get-in price->quantity [:ask ask-price])}})))
 
 (defn best-bid [orderbook]
   (:bid (protocols/bid-ask orderbook)))
@@ -120,48 +175,66 @@
 
 (defn new-fifo-book []
   (map->FifoBook
-   {:buy  (priority-map-keyfn (fn [{:keys [price order-time]}] [(- price) order-time]))
-    :sell (priority-map-keyfn (fn [{:keys [price order-time]}] [price order-time]))
-    :executed-trades {}
-    :current-trade {}}))
+    {:bid             (priority-map-keyfn (fn [{:keys [price order-time]}] [(- price) order-time]))
+     :ask             (priority-map-keyfn (fn [{:keys [price order-time]}] [price order-time]))
+     :executed-trades {}
+     :trade-status    {}
+     :price->quantity {:bid (sorted-map) :ask (sorted-map)}}))
 
-(def book (atom (new-fifo-book)))
-(let [t1 (order {:order-type :limit
-                 :side :buy
-                 :price 112.1
-                 :amount 19
-                 :ticker "aapl"})
-      t2 (order {:order-type :limit
-                 :side :sell
-                 :price 109.9
-                 :amount 5
-                 :ticker "aapl"})]
-  (do
-    (swap! book protocols/fill-order t1)
-    #_(swap! book protocols/fill-order t2)))
+(defn test-limit-then-market []
+  (let [book (atom (new-fifo-book))
+        t1 (order {:order-type :limit
+                   :side       :bid
+                   :price      114.1
+                   :amount     4
+                   :ticker     "aapl"})
+        t2 (order {:order-type :limit
+                   :side       :bid
+                   :price      113.9
+                   :amount     1
+                   :ticker     "aapl"})
+        t3 (order {:order-type :limit
+                   :side       :bid
+                   :price      113.8
+                   :amount     1
+                   :ticker     "aapl"})
+        t4 (order {:order-type :market
+                   :side       :ask
+                   :amount     8
+                   ;:price      112.1
+                   :ticker     "aapl"})]
+    (do
+      (swap! book protocols/fill-order t1)
+      (swap! book protocols/fill-order t2)
+      (swap! book protocols/fill-order t3)
+      (swap! book protocols/fill-order t4))))
+(test-limit-then-market)
+;;TODO: if first trade is market order, and therefore doens't require a price, need to figure out how to
+;;have it rest and take first trade since there are no prices to put in limit book.  Also NPE bc price is nil
 
+;;TODO: for :trade-status, change the structure a bit to represent a "trade result" or something similar
+;;showing e.g. avg fill price (or each fill?), filled qty, remaining, etc.
 (protocols/bid-ask @book)
-(peek (:buy @book))
-(execute-trade (order {:order-type :limit
-                       :side       :buy
-                       :price      109.2
-                       :amount     15
-                       :ticker     "aapl"})
-               (filter (price-acceptable 109.2 :buy :limit) (:sell @book)))
+(peek (:bid @book))
+(peek (:ask @book))
 
-;;@book
-#_(let [b @book
-      order (order {:order-type :limit
-                    :side :buy
-                    :price 105
-                    :amount 50
-                    :user-id 6
-                    :ticker "aapl"})
-      matches (protocols/get-matching-trades b order)]
-  (clojure.pprint/pprint (execute-trade order matches)))
-#_(clojure.pprint/pprint (protocols/fill-order @book (order {:order-type :limit
-                                                           :side :sell
-                                                           :price 104
-                                                           :amount 102
-                                                           :user-id 3
-                                                           :ticker "aapl"})))
+(defn gen-order []
+  (order {:ticker     "LTRPA"
+          :side       (rand-nth [:bid :ask])
+          :order-type (rand-nth [:limit :market])
+          :amount     (rand-nth (range 10 50))
+          :price      (* 10 (rand))}))
+(dotimes [i 10]
+  (swap! book protocols/fill-order (gen-order)))
+@book
+
+;; questions
+;; market order when nothing on other side
+;; reject
+
+;; market order when there are other limits, but not enough for full execution
+;; reject or partial fill?  If partial, convert remaining to limit at last execution px?
+
+;; two market orders and no limits?
+;; not possible bc market rejected if no match in other side for limit trades (see rule 1)
+
