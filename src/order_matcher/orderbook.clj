@@ -204,9 +204,6 @@
 
 ;;TODO: for :trade-status, change the structure a bit to represent a "trade result" or something similar
 ;;showing e.g. avg fill price (or each fill?), filled qty, remaining, etc.
-(protocols/bid-ask @book)
-(peek (:bid @book))
-(peek (:ask @book))
 
 (defn gen-order []
   (order {:ticker     "LTRPA"
@@ -216,7 +213,6 @@
           :price      (* 10 (rand))}))
 (dotimes [i 10]
   (swap! book protocols/fill-order (gen-order)))
-@book
 
 ;; questions
 ;; market order when nothing on other side
