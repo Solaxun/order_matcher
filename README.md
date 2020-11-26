@@ -1,4 +1,4 @@
-![badge](https://action-badges.now.sh/mwoodworth/order_matcher?action=Run%20tests)
+[![Build Status](https://img.shields.io/github/workflow/status/Solaxun/order_matcher/Run%20tests.svg)](https://github.com/Solaxun/order_matcher/actions)
 # order-matcher
 
 An implementation of the FIFO price/time order matching algorithm, [as specified by the CME group](https://www.cmegroup.com/confluence/display/EPICSANDBOX/Supported+Matching+Algorithms#SupportedMatchingAlgorithms-FIFO).  Orders are matched first by price, and if two orders have the same price, then by time on a FIFO basis.  Modifications to orders result in a re-queing. 
