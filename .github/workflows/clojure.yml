@@ -28,4 +28,4 @@ jobs:
         with:
           cli: latest
       - name: Run tests
-        run: bin/kaocha
+        run: lein test
