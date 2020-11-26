@@ -211,7 +211,7 @@
           :order-type (rand-nth [:limit :market])
           :amount     (rand-nth (range 10 50))
           :price      (* 10 (rand))}))
-(dotimes [i 10]
+#_(dotimes [i 10]
   (swap! book protocols/fill-order (gen-order)))
 
 ;; questions
