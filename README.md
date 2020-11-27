@@ -43,10 +43,28 @@ Submit the order to the limit order book:
 (protocols/fill-order aapl-book my-order1)
 ```
 
+As soon as the Order is added, the engine will attempt to find a match.  If a match is found, the trade will be executed immediately, otherwise it will be added to the orderbook until a matching trade occurs.  Resu;ts of running the above example:
 
-As soon as the Order is added, the engine will attempt to find a match.  If a match is found, the trade will be executed immediately, otherwise it will be added to the orderbook until a matching trade occurs.
-
-
+```clojure
+#order_matcher.orderbook.FifoBook{:ticker "aapl",
+                                  :bid {#uuid"586807eb-eb8e-4b36-afd5-f1e393cfba91" {:order-type :limit,
+                                                                                     :side :bid,
+                                                                                     :price 114.1,
+                                                                                     :amount 4,
+                                                                                     :ticker "aapl",
+                                                                                     :order-time #object[java.time.LocalDateTime
+                                                                                                         0x3bbcd70c
+                                                                                                         "2020-11-26T20:32:35.494"],
+                                                                                     :trade-id #uuid"586807eb-eb8e-4b36-afd5-f1e393cfba91"}},
+                                  :ask {},
+                                  :last-execution {},
+                                  :executed-trades {},
+                                  :trade-status {:status :pending,
+                                                 :trade-id #uuid"586807eb-eb8e-4b36-afd5-f1e393cfba91",
+                                                 :amount-remaining 4,
+                                                 :fills []},
+                                  :price->quantity {:bid {114.1 4}, :ask {}}}
+```
 ### Future Work
 Implement a variety of other order matching strategies, for example: [Supported Matching Algorithms](https://www.cmegroup.com/confluence/display/EPICSANDBOX/Supported+Matching+Algorithms)
 
