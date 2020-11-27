@@ -67,7 +67,7 @@ After running the above example, the FifoBook records the limit order under the 
                                                  :fills []},
                                   :price->quantity {:bid {114.1 4}, :ask {}}}
 ```
-The orderbook Record consists of several fields:
+The FifoBook Record consists of several fields:
 - `:price->quantity`  aggregates limit order amounts on the bid and ask side of the book at each price level, providing a view of the current state of the order book.  
 - `:executed-trades` any time an order is placed and matches an existing trade in the book, the matched trades which execute will appear here.  
 - `:trade-status` shows the status and details of the entered order.  Within this map the `:fills` vector will show the prices and amounts of each fill in the event a trade results in several partial fills as it runs through the opposite side of the book.  
