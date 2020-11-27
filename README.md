@@ -76,7 +76,7 @@ Implement a variety of other order matching strategies, for example: [Supported 
 
 ## License
 
-Copyright © 2020Mark Woodworth
+Copyright © 2020 Mark Woodworth
 
 Distributed under the Eclipse Public License either version 1.0 or (at
 your option) any later version.
