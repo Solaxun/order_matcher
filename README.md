@@ -43,7 +43,9 @@ Submit the order to the limit order book:
 (protocols/fill-order aapl-book my-order1)
 ```
 
-As soon as the Order is added, the engine will attempt to find a match.  If a match is found, the trade will be executed immediately, otherwise it will be added to the orderbook until a matching trade occurs.  Resu;ts of running the above example:
+As soon as the Order is added, the engine will attempt to find a match.  If a match is found, the trade will be executed immediately, otherwise it will be added to the orderbook until a matching trade occurs.  
+
+Results of running the above example:
 
 ```clojure
 #order_matcher.orderbook.FifoBook{:ticker "aapl",
@@ -65,6 +67,8 @@ As soon as the Order is added, the engine will attempt to find a match.  If a ma
                                                  :fills []},
                                   :price->quantity {:bid {114.1 4}, :ask {}}}
 ```
+
+The FifoBook records the limit trade under the `:bid` key where it will rest until a matching `:ask` is submitted.  The `:price->quantity` field aggregates limit order amounts on the bid and ask side of the book at each price level, providing a view of the current state of the order book.  Any trades that are placed and match an existing trade in the book will result in the `:executed-trades` map being populated with the details of these executed trades.  The corresponding execution status of the current trade will be shown in the `:trade-status` map, as seen above.  Within this map, the `:fills` vector will show the prices and amounts of each fill in the event a trade results in several partial fills as it runs through the opposite side of the book.  
 ### Future Work
 Implement a variety of other order matching strategies, for example: [Supported Matching Algorithms](https://www.cmegroup.com/confluence/display/EPICSANDBOX/Supported+Matching+Algorithms)
 
