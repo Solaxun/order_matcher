@@ -1,7 +1,9 @@
 [![Build Status](https://img.shields.io/github/workflow/status/Solaxun/order_matcher/Run%20tests.svg)](https://github.com/Solaxun/order_matcher/actions)
 # order-matcher
 
-An immutable limit order book implementing FIFO price/time priority matching. Orders are matched first by price, and if two orders have the same price, then by time with the oldest trades matched first.  Modifications to orders result in a re-queing and a new priority for the trade will be set according to the updated price and time of such modification. 
+An immutable limit order book implementing FIFO price/time priority matching. Orders are matched first by price, and if two orders have the same price, then by time with the oldest trades matched first.  Modifications to orders result in a re-queing and a new priority for the trade will be set according to the updated price and time of such modification.
+
+Immutability buys us the convenience of safe multi-threaded access, but the there is a cost for that convenience paid in speed.  Currently the orderbook can handle ~50k orders/second (benchmarked on late 2013 macbook pro 2.4 GHz Intel Core i5).  For certain applications, e.g. HFT, this may not be sufficient.
 
 ## Examples
 
