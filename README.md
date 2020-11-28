@@ -68,7 +68,8 @@ The FifoBook Record consists of several fields:
 - `:executed-trades` any time an order is placed and matches an existing trade in the book, the matched trades which execute will appear here.  
 - `:trade-status` shows the status and details of the entered order.  Within this map the `:fills` vector will show the prices and amounts of each fill in the event a trade results in several partial fills as it runs through the opposite side of the book.  
 ### Future Work
-Implement a variety of other order matching strategies, for example: [Supported Matching Algorithms](https://www.cmegroup.com/confluence/display/EPICSANDBOX/Supported+Matching+Algorithms)
+- Implement a variety of other order matching strategies, for example: [Supported Matching Algorithms](https://www.cmegroup.com/confluence/display/EPICSANDBOX/Supported+Matching+Algorithms)
+- Allow different order types, for example Good till Canceled (GTC), Stop Limits, Day Orders, etc.
 
 ## License
 
