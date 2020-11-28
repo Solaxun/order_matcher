@@ -3,7 +3,7 @@
 
 An immutable limit order book implementing FIFO price/time priority matching. Orders are matched first by price, and if two orders have the same price, then by time with the oldest trades matched first.  Modifications to orders result in a re-queing and a new priority for the trade will be set according to the updated price and time of such modification. 
 
-## Usage
+## Examples
 
 Create an order with the `order` function.  The following keys are required:
 
@@ -16,10 +16,6 @@ Create an order with the `order` function.  The following keys are required:
 The following keys will be added for you when the Order is created:
 - :trade-id (UUID representing an individual trade)
 - :order-time (time at which the trade was entered)
- 
-Once a trade has been made, execute it by calling `add-order` with the trade as an argument.
-
-## Examples
 
 Create a limit order to buy 4 shares of aapl at a price of 114.1 or better:
 
