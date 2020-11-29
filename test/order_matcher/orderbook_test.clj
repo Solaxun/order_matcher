@@ -68,10 +68,10 @@
       (is (and (= (:bid newbook2) {})
                (= ((comp #(get % (:trade-id order3)) :ask) newbook2)
                   (-> order3 :trade (assoc :amount 7)))))
-      (is (= (:price->quantity newbook)
-             {:bid {} :ask {103.1 7}}))
-      (is (= (:price->quantity newbook2)
-             {:bid {} :ask {103.1 7}})))))
+      (is (= (seq (:price->quantity newbook))
+             (seq {:bid {} :ask {103.1 7}})))
+      (is (= (seq (:price->quantity newbook2))
+             (seq {:bid {} :ask {103.1 7}}))))))
 
 (defn test-limit-then-market []
   (let [book (atom (orderbook/new-fifo-book "aapl"))
