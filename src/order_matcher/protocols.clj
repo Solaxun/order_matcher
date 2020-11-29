@@ -7,3 +7,6 @@
   (update-order [this trade-id new-order] "Replaces an existing order in the book, the result is re-queued with a new priority")
   (cancel-order [this trade-id] "Removes an order from the book")
   (bid-ask [this] "Returns the top of the book bid/ask price and quantities"))
+
+(defprotocol Display
+  (display-book [this] "Show the orderbook in a human readable format"))
