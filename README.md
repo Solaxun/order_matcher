@@ -17,17 +17,29 @@ Create an order with the `order` function.  The following keys are required:
 
 The following keys will be added for you when the Order is created:
 - :trade-id (UUID representing an individual trade)
+  - This will be used to retrieve, modify, and cancel trades from the book, <strong>so be sure to store a reference to it</strong>.
 - :order-time (time at which the trade was entered)
 
 Create a limit order to buy 4 shares of aapl at a price of 114.1 or better:
 
 ```clojure
+(ns order-matcher.orderbook)
+
 (def my-order1 
   (order {:order-type :limit
           :side       :bid
           :price      114.1
           :amount     4
           :ticker     "aapl"})
+
+;; => {:trade-id #uuid"7d858974-2584-45df-bf19-1f1fe65e8704",
+;;     :trade {:order-type :limit,
+;;             :side :bid,
+;;             :price 114.1,
+;;             :amount 4,
+;;             :ticker "aapl",
+;;             :order-time #object[java.time.LocalDateTime 0x31fc86c3 "2020-11-30T16:52:19.747"],
+;;             :trade-id #uuid"7d858974-2584-45df-bf19-1f1fe65e8704"}}
 ```
 
 Create a new limit order book:
@@ -38,6 +50,9 @@ Create a new limit order book:
 
 Submit the order to the limit order book:
 ```clojure
+(ns order-matcher.orderbook
+ (:require [order-matcher.protocols :as protocols]))
+ 
 (protocols/fill-order aapl-book my-order1)
 ```
 
